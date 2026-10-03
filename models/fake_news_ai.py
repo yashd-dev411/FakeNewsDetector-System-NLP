@@ -1,62 +1,74 @@
+import os
 import re
 import random
-import nltk
+import sys
+from datetime import datetime, timedelta
+
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.naive_bayes import MultinomialNB
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
+
+# 1. Configure NLTK to use Vercel's writable /tmp directory
+import nltk
+
+nltk_dir = '/tmp/nltk_data'
+os.makedirs(nltk_dir, exist_ok=True)
+if nltk_dir not in nltk.data.path:
+    nltk.data.path.insert(0, nltk_dir)
+
+# Download required tokenizers and corpora safely to /tmp
+for resource in ['punkt', 'punkt_tab', 'stopwords', 'wordnet']:
+    try:
+        nltk.download(resource, download_dir=nltk_dir, quiet=True)
+    except Exception:
+        pass
+
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
-import os
-from datetime import datetime, timedelta
 
-# Download necessary NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('punkt')
-    nltk.download('stopwords')
-    nltk.download('wordnet')
 
 class FakeNewsAI:
     def __init__(self):
-        self.stop_words = set(stopwords.words('english'))
+        try:
+            self.stop_words = set(stopwords.words('english'))
+        except Exception:
+            self.stop_words = set()
+
         self.lemmatizer = WordNetLemmatizer()
-        self.vectorizer = TfidfVectorizer(max_features=5000, 
-                                         ngram_range=(1, 3),
-                                         stop_words='english',
-                                         min_df=2)
-        
-        # Use a more powerful model
-        self.model = RandomForestClassifier(n_estimators=100, 
-                                           random_state=42, 
-                                           n_jobs=-1,
-                                           class_weight='balanced')
-        
-        # Initialize with a more comprehensive model
-        self._initialize_model()
-        
-        # Load pre-trained model if available
+        self.vectorizer = TfidfVectorizer(
+            max_features=5000,
+            ngram_range=(1, 3),
+            stop_words='english',
+            min_df=2
+        )
+
+        self.model = RandomForestClassifier(
+            n_estimators=100,
+            random_state=42,
+            n_jobs=1,  # Serial mode avoids multiprocessing errors on serverless
+            class_weight='balanced'
+        )
+
+        # Check for pre-trained model files first
         model_path = os.path.join(os.path.dirname(__file__), 'fake_news_model.joblib')
         vectorizer_path = os.path.join(os.path.dirname(__file__), 'tfidf_vectorizer.joblib')
-        
+
+        loaded = False
         if os.path.exists(model_path) and os.path.exists(vectorizer_path):
             try:
                 self.model = joblib.load(model_path)
                 self.vectorizer = joblib.load(vectorizer_path)
-                print("Loaded pre-trained model and vectorizer")
+                loaded = True
             except Exception as e:
                 print(f"Error loading pre-trained model: {e}")
-                self._initialize_model()
-        
-        # Fake news patterns - expanded with more sophisticated patterns
+
+        if not loaded:
+            self._initialize_model()
+
+        # Fake news patterns
         self.fake_news_patterns = [
             r'(?i)miracle cure',
             r'(?i)doctors hate (him|her|this|them)',
@@ -99,7 +111,6 @@ class FakeNewsAI:
             r'(?i)they\'re lying to you',
             r'(?i)the media won\'t report this',
             r'(?i)what they\'re covering up',
-            # New patterns for extraordinary claims
             r'(?i)aliens (landed|arrived|visited|contacted)',
             r'(?i)extraterrestrial (beings|life|contact|communication)',
             r'(?i)ufo (landing|sighting|contact)',
@@ -125,7 +136,6 @@ class FakeNewsAI:
             r'(?i)defies (physics|science|explanation|logic)',
             r'(?i)beyond (science|explanation|understanding)',
             r'(?i)scientists cannot explain',
-            # New patterns for celebrity death hoaxes
             r'(?i)breaking news:.*?(died|passed away|dead|death)',
             r'(?i)breaking:.*?(died|passed away|dead|death)',
             r'(?i)(celebrity|famous|politician|actor|actress|singer).*?(died|passed away|dead|death)',
@@ -144,8 +154,8 @@ class FakeNewsAI:
             r'(?i)sudden death.*?(politician|celebrity|famous)',
             r'(?i)unexpected passing.*?(politician|celebrity|famous)'
         ]
-        
-        # Scientific impossibilities - expanded with more examples
+
+        # Scientific impossibilities
         self.scientific_impossibilities = [
             "moon made of cheese",
             "flat earth",
@@ -177,7 +187,6 @@ class FakeNewsAI:
             "government controls the weather",
             "earth is the center of the universe",
             "essential oils cure serious diseases",
-            # New scientific impossibilities
             "aliens landed on earth",
             "extraterrestrial beings visited earth",
             "alien spacecraft landed in major city",
@@ -198,7 +207,6 @@ class FakeNewsAI:
             "human cloning is widely practiced",
             "consciousness can be transferred between bodies",
             "people can communicate telepathically",
-            # Absurd claims about space and physics
             "human landed on the sun",
             "astronaut visited the sun",
             "mission to the sun",
@@ -222,8 +230,8 @@ class FakeNewsAI:
             "humans can survive absolute zero",
             "humans can survive temperatures over 100°C"
         ]
-        
-        # Absurd claim combinations that are scientifically impossible
+
+        # Absurd claim combinations
         self.absurd_claim_combinations = [
             ("human", "sun", "landed"),
             ("astronaut", "sun", "mission"),
@@ -236,8 +244,8 @@ class FakeNewsAI:
             ("mission", "sun", "success"),
             ("travel", "sun", "returned")
         ]
-        
-        # Credibility indicators - expanded with policy and economic indicators
+
+        # Credibility indicators
         self.credibility_indicators = [
             r'(?i)according to (research|studies|experts|scientists|data)',
             r'(?i)research (published|conducted) (in|by)',
@@ -254,7 +262,6 @@ class FakeNewsAI:
             r'(?i)independent verification',
             r'(?i)statistical analysis shows',
             r'(?i)according to official records',
-            # New policy and economic indicators
             r'(?i)policy (change|reform|implementation)',
             r'(?i)economic (impact|effect|consequence)',
             r'(?i)trade (negotiations|agreement|deal|talks)',
@@ -276,24 +283,24 @@ class FakeNewsAI:
             r'(?i)diplomatic (channels|sources|relations)',
             r'(?i)according to (officials|authorities|the government|the ministry|the department)'
         ]
-    
+
     def preprocess_text(self, text):
         """Preprocess text for analysis"""
-        # Tokenize
-        tokens = word_tokenize(text.lower())
-        
-        # Remove stopwords and lemmatize
+        try:
+            tokens = word_tokenize(text.lower())
+        except Exception:
+            tokens = re.findall(r'\b\w+\b', text.lower())
+
         processed_tokens = [
-            self.lemmatizer.lemmatize(token) 
-            for token in tokens 
+            self.lemmatizer.lemmatize(token)
+            for token in tokens
             if token.isalpha() and token not in self.stop_words
         ]
-        
+
         return " ".join(processed_tokens)
-        
+
     def _initialize_model(self):
-        """Initialize a more comprehensive model with a larger dataset"""
-        # Create a more comprehensive dataset for training
+        """Train a lightweight default model in memory"""
         fake_news = [
             "Miracle cure for all diseases found in common household item",
             "Doctors hate this one weird trick that cures all ailments",
@@ -326,7 +333,7 @@ class FakeNewsAI:
             "Government hiding evidence of supernatural beings",
             "This food cures diabetes instantly"
         ]
-        
+
         real_news = [
             "New study finds link between exercise and improved mental health",
             "Government announces new infrastructure development plan",
@@ -359,42 +366,31 @@ class FakeNewsAI:
             "Government implements new cybersecurity protocols",
             "Space agency successfully launches satellite for climate monitoring"
         ]
-        
-        # Add more examples with preprocessing
+
         X = [self.preprocess_text(text) for text in fake_news + real_news]
-        y = [1] * len(fake_news) + [0] * len(real_news)  # 1 for fake, 0 for real
-        
-        # Fit the vectorizer and transform the text data
+        y = [1] * len(fake_news) + [0] * len(real_news)
+
         X_tfidf = self.vectorizer.fit_transform(X)
-        
-        # Train the model
         self.model.fit(X_tfidf, y)
-        
-        # Save the model and vectorizer
+
+        # Save to /tmp to avoid read-only filesystem errors on serverless
         try:
-            model_path = os.path.join(os.path.dirname(__file__), 'fake_news_model.joblib')
-            vectorizer_path = os.path.join(os.path.dirname(__file__), 'tfidf_vectorizer.joblib')
-            
-            joblib.dump(self.model, model_path)
-            joblib.dump(self.vectorizer, vectorizer_path)
-            print("Saved model and vectorizer")
-        except Exception as e:
-            print(f"Error saving model: {e}")
-    
+            tmp_model = '/tmp/fake_news_model.joblib'
+            tmp_vec = '/tmp/tfidf_vectorizer.joblib'
+            joblib.dump(self.model, tmp_model)
+            joblib.dump(self.vectorizer, tmp_vec)
+        except Exception:
+            pass
+
     def analyze_text(self, text):
         """Analyze text for fake news indicators"""
-        # Preprocess the text
         processed_text = self.preprocess_text(text)
-        
-        # Vectorize the text
         text_tfidf = self.vectorizer.transform([processed_text])
-        
-        # Get model prediction and confidence
+
         prediction_proba = self.model.predict_proba(text_tfidf)[0]
-        fake_news_probability = prediction_proba[1] * 100  # Convert to percentage
-        model_confidence = round(max(prediction_proba) * 100)  # Round off the confidence value
-        
-        # Check for specific known fake news samples
+        fake_news_probability = prediction_proba[1] * 100
+        model_confidence = round(max(prediction_proba) * 100)
+
         known_fake_samples = [
             "moon is composed entirely of cheese",
             "moon is not made of rock and dust but is, in fact, composed entirely of cheese",
@@ -405,7 +401,6 @@ class FakeNewsAI:
             "astronaut to the sun",
             "mission to the sun at night",
             "avoid extreme heat by going at night",
-            # Add celebrity death hoaxes
             "trump passes away",
             "trump died",
             "trump dead",
@@ -416,30 +411,26 @@ class FakeNewsAI:
             "obama died",
             "obama dead"
         ]
-        
+
         is_known_fake = any(sample.lower() in text.lower() for sample in known_fake_samples)
-        
-        # Check for absurd claim combinations
+
         absurd_claims_found = []
         text_lower = text.lower()
         for claim_tuple in self.absurd_claim_combinations:
             if all(term in text_lower for term in claim_tuple):
                 absurd_claims_found.append(" + ".join(claim_tuple))
-        
-        # Check for fake news patterns
+
         pattern_matches = []
         for pattern in self.fake_news_patterns:
             matches = re.findall(pattern, text)
             if matches:
                 pattern_matches.append(pattern.replace('(?i)', '').replace('r\'', '').replace('\'', ''))
-        
-        # Check for scientific impossibilities
+
         found_impossibilities = []
         for impossibility in self.scientific_impossibilities:
             if impossibility.lower() in text.lower():
                 found_impossibilities.append(impossibility)
-        
-        # Check for extraordinary claims that require extraordinary evidence
+
         extraordinary_claims = [
             "aliens", "extraterrestrial", "ufo", "spacecraft", "intergalactic",
             "supernatural", "paranormal", "miracle", "unexplained phenomenon",
@@ -447,160 +438,114 @@ class FakeNewsAI:
             "moon made of cheese", "cheese moon", "dairy moon",
             "sun landing", "human on sun", "visit sun", "mission to sun"
         ]
-        
+
         extraordinary_claim_found = any(claim in text.lower() for claim in extraordinary_claims)
-        
-        # Check for credibility indicators
+
         credibility_indicators_found = []
         for indicator in self.credibility_indicators:
             matches = re.findall(indicator, text)
             if matches:
                 credibility_indicators_found.append(indicator.replace('(?i)', '').replace('r\'', '').replace('\'', ''))
-        
-        # Calculate text statistics
+
         words = text.split()
         word_count = len(words)
         avg_word_length = sum(len(word) for word in words) / max(1, word_count)
         sentence_count = len(re.split(r'[.!?]+', text))
         avg_sentence_length = word_count / max(1, sentence_count)
-        
-        # Calculate linguistic complexity
         linguistic_complexity = min(100, (avg_word_length * 10 + avg_sentence_length * 0.5))
-        
-        # Base credibility score starts at model's inverse of fake news probability
+
         base_credibility_score = 100 - fake_news_probability
-        
-        # Initial credibility score
         credibility_score = base_credibility_score
-        
-        # If this is a known fake news sample, immediately set a very low credibility score
+
         if is_known_fake:
-            credibility_score = 10  # Extremely low credibility for known fake news
-            
-        # If absurd claim combinations are found, set a very low credibility score
+            credibility_score = 10
+
         if absurd_claims_found:
-            credibility_score = min(credibility_score, 12)  # Even lower for absurd claims
-            
-        # Penalize for pattern matches - INCREASED PENALTY
+            credibility_score = min(credibility_score, 12)
+
         if pattern_matches:
-            # Apply a stronger penalty for suspicious patterns
-            # Each pattern now reduces score by 15 points with a max of 75 points reduction
             pattern_penalty = min(len(pattern_matches) * 15, 75)
             credibility_score -= pattern_penalty
-            
-            # If any suspicious pattern is found, cap the maximum possible credibility score
+
             if "allegedly" in pattern_matches or "anonymous sources" in pattern_matches:
-                credibility_score = min(credibility_score, 70)  # Cap at 70% if these specific patterns are found
-            
-            # More severe cap for highly suspicious patterns
+                credibility_score = min(credibility_score, 70)
+
             suspicious_patterns = ["conspiracy", "secret", "shocking truth", "miracle", "they don't want you to know"]
             if any(pattern in " ".join(pattern_matches).lower() for pattern in suspicious_patterns):
-                credibility_score = min(credibility_score, 50)  # Cap at 50% for highly suspicious patterns
-                
-            # Special handling for extraordinary claims
+                credibility_score = min(credibility_score, 50)
+
             extraordinary_patterns = ["aliens", "extraterrestrial", "ufo", "spacecraft", "unexplained", "mysterious"]
             if any(pattern in " ".join(pattern_matches).lower() for pattern in extraordinary_patterns):
-                credibility_score = min(credibility_score, 40)  # Cap at 40% for extraordinary claims without evidence
-                
-            # Special handling for celebrity death news
+                credibility_score = min(credibility_score, 40)
+
             death_patterns = ["died", "passed away", "dead", "death", "cardiac arrest", "sudden death"]
             political_figures = ["trump", "biden", "obama", "clinton", "president", "politician"]
-            
-            # Check if the text contains both death-related terms and mentions of political figures
+
             has_death_terms = any(term in text.lower() for term in death_patterns)
             has_political_figures = any(figure in text.lower() for figure in political_figures)
-            
+
             if has_death_terms and has_political_figures:
-                # Check for official confirmation patterns
                 official_confirmation = any(term in text.lower() for term in [
-                    "official white house statement", 
-                    "family has confirmed", 
+                    "official white house statement",
+                    "family has confirmed",
                     "official statement from the family",
                     "confirmed by multiple sources",
                     "confirmed by hospital officials",
                     "confirmed by government officials"
                 ])
-                
-                # If there's no official confirmation, treat as potential fake news
+
                 if not official_confirmation:
-                    # Apply a strong penalty for unconfirmed political death news
-                    credibility_score = min(credibility_score, 30)  # Cap at 30% for unconfirmed death news
-                    
-                    # If it contains terms like "breaking news" or "shocking", reduce even further
+                    credibility_score = min(credibility_score, 30)
+
                     if "breaking" in text.lower() or "shocking" in text.lower():
-                        credibility_score = min(credibility_score, 20)  # Cap at 20% for sensationalist death news
-                        
-                    # Check for conspiracy theory mentions
+                        credibility_score = min(credibility_score, 20)
+
                     if "conspiracy" in text.lower() or "theories" in text.lower():
-                        credibility_score = min(credibility_score, 15)  # Cap at 15% if conspiracy theories are mentioned
-        
-        # Penalize for scientific impossibilities
+                        credibility_score = min(credibility_score, 15)
+
         if found_impossibilities:
             impossibility_penalty = min(len(found_impossibilities) * 30, 90)
             credibility_score -= impossibility_penalty
-            
-            # If any scientific impossibility is found, cap the maximum credibility
-            credibility_score = min(credibility_score, 25)  # Cap at 25% for scientific impossibilities
-            
-            # Special handling for specific impossibilities
+            credibility_score = min(credibility_score, 25)
+
             sun_impossibilities = ["human landed on the sun", "astronaut visited the sun", "mission to the sun", "sun landing"]
             if any(imp in found_impossibilities for imp in sun_impossibilities):
-                credibility_score = min(credibility_score, 8)  # Extremely low cap for sun landing claims
-                
-        # Extraordinary claims require extraordinary evidence
+                credibility_score = min(credibility_score, 8)
+
         if extraordinary_claim_found and len(credibility_indicators_found) < 5:
-            # If there's an extraordinary claim without sufficient credible sources, cap the score
             credibility_score = min(credibility_score, 35)
-            
-        # Check for specific phrases about going to the sun at night
+
         if "night" in text.lower() and "sun" in text.lower() and any(term in text.lower() for term in ["avoid heat", "extreme heat", "temperature"]):
-            # This is a clear indicator of absurdity - going to the sun at night to avoid heat
-            credibility_score = min(credibility_score, 5)  # Extremely low credibility
-            
-        # Boost for credibility indicators - ENHANCED BOOST
+            credibility_score = min(credibility_score, 5)
+
         if credibility_indicators_found and not is_known_fake and not found_impossibilities and not absurd_claims_found:
-            # Only apply boost if not a known fake news sample and no impossibilities
-            # Apply a stronger boost for credibility indicators
             credibility_boost = min(len(credibility_indicators_found) * 8, 40)
-            
-            # Extra boost for policy and economic indicators
+
             policy_economic_indicators = [
-                "policy", "economic", "trade", "bilateral", "diplomatic", 
-                "government", "ministry", "department", "official", 
-                "legislation", "regulatory", "fiscal", "monetary", "tax", 
+                "policy", "economic", "trade", "bilateral", "diplomatic",
+                "government", "ministry", "department", "official",
+                "legislation", "regulatory", "fiscal", "monetary", "tax",
                 "budget", "international", "strategic"
             ]
-            
+
             policy_indicators_count = sum(
-                1 for indicator in credibility_indicators_found 
+                1 for indicator in credibility_indicators_found
                 if any(term in indicator.lower() for term in policy_economic_indicators)
             )
-            
-            # Additional boost for policy/economic news
+
             if policy_indicators_count > 0:
                 policy_boost = min(policy_indicators_count * 5, 25)
                 credibility_boost += policy_boost
-            
-            # Apply the total boost
+
             credibility_score += credibility_boost
-        
-        # Text complexity analysis
-        words = text.split()
-        word_count = len(words)
-        avg_word_length = sum(len(word) for word in words) / max(1, word_count)
-        
-        # Longer, more complex articles tend to be more credible, but only if no suspicious patterns
+
         if word_count > 200 and avg_word_length > 5 and not pattern_matches and not found_impossibilities and not is_known_fake and not absurd_claims_found:
             complexity_boost = min((word_count / 100), 10)
             credibility_score += complexity_boost
-        
-        # Ensure score is within 0-100 range
+
         credibility_score = max(0, min(100, credibility_score))
-        
-        # Recalculate fake_news_probability based on adjusted credibility score
-        # This ensures consistency between credibility score and fake news probability
         fake_news_probability = 100 - credibility_score
-        
+
         return {
             'credibility_score': round(credibility_score, 1),
             'fake_news_probability': round(fake_news_probability, 1),
@@ -620,30 +565,24 @@ class FakeNewsAI:
     def generate_timeline_data(self, base_score):
         """
         Generate a realistic credibility timeline over time.
-        Simulates how credibility evolves as sources verify content.
         Returns 24 hourly points with ISO timestamps.
         """
-        hours = 24  # 24-hour timeline for clean X-axis (no duplicate HH:MM)
+        hours = 24
         timeline_data = []
         now = datetime.now()
 
-        # Start point is noisier and drifts toward the final base_score (simulating verification)
-        # Low cred news starts high then drops, high cred starts low then rises - converges to base
         current = base_score + random.uniform(-14, 14)
         current = max(8, min(92, current))
 
         for i in range(hours):
             progress = i / (hours - 1) if hours > 1 else 1
 
-            # Drift toward base_score increases as time progresses (verification converges)
-            drift_strength = 0.12 + progress * 0.18  # 0.12 -> 0.30
+            drift_strength = 0.12 + progress * 0.18
             drift = (base_score - current) * drift_strength
 
-            # Random noise: smaller near the end for stabilization
             noise_scale = 5.5 * (1 - progress * 0.5)
             noise = random.uniform(-noise_scale, noise_scale)
 
-            # Occasional fact-check spikes
             if random.random() < 0.12:
                 if base_score >= 70:
                     noise += random.uniform(1.5, 4.5)
@@ -655,7 +594,6 @@ class FakeNewsAI:
             current = current + drift + noise
             current = max(0, min(100, current))
 
-            # Force final point to be very close to base_score
             if i == hours - 1:
                 current = base_score + random.uniform(-1.2, 1.2)
                 current = max(0, min(100, current))
@@ -669,16 +607,9 @@ class FakeNewsAI:
 
         return timeline_data
 
-# Example usage
+
 if __name__ == "__main__":
     fake_news_ai = FakeNewsAI()
-    
-    # Test with a fake news example
     fake_news = "NASA confirms the Moon is made of cheese. Scientists are shocked by this discovery."
     result = fake_news_ai.analyze_text(fake_news)
     print(f"Fake news example: {result}")
-    
-    # Test with a real news example
-    real_news = "NASA's rover collects samples from Mars surface for analysis. According to research published in the Journal of Planetary Science, these samples contain minerals that suggest the presence of water in the past."
-    result = fake_news_ai.analyze_text(real_news)
-    print(f"Real news example: {result}")
